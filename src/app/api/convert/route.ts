@@ -3,6 +3,7 @@ import { convertLottieToVideo } from '@/lib/converter';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60; // Max allowed for Vercel Pro, Hobby is 10s
 
 console.log('[API] Convert route file loaded');
 
@@ -13,7 +14,7 @@ export async function POST(req: NextRequest) {
         const file = formData.get('file') as File;
         const formatsString = formData.get('formats') as string;
 
-        console.log(`[API] File: ${file?.name}, Formats: ${formatsString}`);
+        console.log(`[API] File: ${file?.name}, Size: ${file?.size} bytes, Formats: ${formatsString}`);
 
         if (!file) {
             console.error('[API] No file uploaded');

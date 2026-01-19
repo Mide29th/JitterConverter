@@ -48,13 +48,30 @@ export default function Home() {
       clearInterval(progressInterval);
       console.log('[Frontend] Response received from /api/convert', response.status);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('[Frontend] Conversion failed', errorData);
-        throw new Error(errorData.details || errorData.error || 'Conversion failed');
+      const contentType = response.headers.get("content-type");
+      let data: any;
+
+      if (contentType && contentType.includes("application/json")) {
+        data = await response.json();
+      } else {
+        const text = await response.text();
+        console.error('[Frontend] Received non-JSON response:', text);
+        const snippet = text.length > 100 ? text.substring(0, 100) + '...' : text;
+
+        if (response.status === 413) {
+          throw new Error(`File is too large for Vercel (Limit: 4.5MB). Your file is ${(file.size / (1024 * 1024)).toFixed(2)}MB.`);
+        } else if (response.status === 504 || response.status === 408) {
+          throw new Error(`Conversion timed out on Vercel. Large animations might exceed the 10s Hobby limit.`);
+        }
+
+        throw new Error(`Server returned ${response.status}: ${snippet || 'Unknown error'}`);
       }
 
-      const data = await response.json();
+      if (!response.ok) {
+        console.error('[Frontend] Conversion failed', data);
+        throw new Error(data.details || data.error || `Conversion failed (${response.status})`);
+      }
+
       console.log('[Frontend] Response data parsed', data);
 
       if (data.success) {
