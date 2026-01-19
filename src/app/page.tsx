@@ -206,7 +206,7 @@ export default function Home() {
 
 
         <footer className="mt-12 text-center text-sm text-zinc-500">
-          Built with Jitter exports in mind. No data ever leaves your browser.
+          Built with Jitter exports in mind.
         </footer>
       </main>
     </div>
