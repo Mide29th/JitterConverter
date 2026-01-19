@@ -1,5 +1,4 @@
 import puppeteer from 'puppeteer';
-import { PuppeteerScreenRecorder } from 'puppeteer-screen-recorder';
 import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs';
 import path from 'path';
