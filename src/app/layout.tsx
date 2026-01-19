@@ -15,6 +15,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Jitter Converter - Export your animations",
   description: "Convert Jitter .json exports to MP4, GIF, and WebP with ease.",
+  icons: {
+    icon: "/globe.svg",
+  },
 };
 
 export default function RootLayout({
