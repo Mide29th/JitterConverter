@@ -10,6 +10,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { Sparkles, ArrowRight, Play, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import * as fflate from "fflate";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -30,14 +31,22 @@ export default function Home() {
     setDownloadUrls({});
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('formats', JSON.stringify(formats));
-
       // Use a custom progress simulation for better UX during the real request
       const progressInterval = setInterval(() => {
         setProgress((prev) => (prev < 90 ? prev + 1 : prev));
       }, 200);
+
+      console.log('[Frontend] Reading and compressing file...');
+      const fileText = await file.text();
+      const fileData = new TextEncoder().encode(fileText);
+      const compressed = fflate.zlibSync(fileData, { level: 9 });
+
+      console.log(`[Frontend] Original: ${file.size} bytes, Compressed: ${compressed.length} bytes`);
+
+      const compressedBlob = new Blob([compressed as any], { type: 'application/octet-stream' });
+      const formData = new FormData();
+      formData.append('file', compressedBlob, file.name + '.zlib');
+      formData.append('formats', JSON.stringify(formats));
 
       console.log('[Frontend] Request sent to /api/convert');
       const response = await fetch('/api/convert', {

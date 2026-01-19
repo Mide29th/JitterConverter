@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { convertLottieToVideo } from '@/lib/converter';
+import * as fflate from 'fflate';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,7 +28,13 @@ export async function POST(req: NextRequest) {
         }
 
         const formats = JSON.parse(formatsString);
-        const fileContent = await file.text();
+
+        console.log('[API] Decompressing file...');
+        const compressedBuffer = await file.arrayBuffer();
+        const decompressed = fflate.unzlibSync(new Uint8Array(compressedBuffer));
+        const fileContent = new TextDecoder().decode(decompressed);
+
+        console.log(`[API] Decompressed size: ${fileContent.length} bytes`);
         const lottieJson = JSON.parse(fileContent);
 
         console.log('[API] Starting conversion utility...');
