@@ -1,12 +1,12 @@
-import puppeteer from 'puppeteer';
-import ffmpeg from 'fluent-ffmpeg';
+import { bundle } from "@remotion/bundler";
+import { renderMedia, selectComposition } from "@remotion/renderer";
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { v4 as uuidv4 } from 'uuid';
-import { PassThrough } from 'stream';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import ffprobeInstaller from '@ffprobe-installer/ffprobe';
+import ffmpeg from 'fluent-ffmpeg';
 
 // Dynamic paths for ffmpeg and ffprobe binaries
 const ffmpegPath = ffmpegInstaller.path;
@@ -14,8 +14,6 @@ const ffprobePath = ffprobeInstaller.path;
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 ffmpeg.setFfprobePath(ffprobePath);
-
-const CONCURRENCY = 4; // Reduced to 4 for better reliability across different hardware
 
 export interface ConversionResult {
     mp4?: string;
@@ -28,242 +26,82 @@ export async function convertLottieToVideo(
     formats: string[]
 ): Promise<ConversionResult> {
     const sessionId = uuidv4();
-    console.log(`[Converter] Starting conversion for session ${sessionId}`);
+    console.log(`[Converter] Starting Remotion conversion for session ${sessionId}`);
     const tempDir = path.join(os.tmpdir(), 'jitter-converter', sessionId);
 
     if (!fs.existsSync(tempDir)) {
         fs.mkdirSync(tempDir, { recursive: true });
     }
 
-    const jsonPath = path.join(tempDir, 'animation.json');
-    fs.writeFileSync(jsonPath, JSON.stringify(lottieJson));
+    // Force even dimensions to prevent FFmpeg scaling/codec glitches
+    const width = (lottieJson.w || 1920) % 2 === 0 ? (lottieJson.w || 1920) : (lottieJson.w || 1920) - 1;
+    const height = (lottieJson.h || 1080) % 2 === 0 ? (lottieJson.h || 1080) : (lottieJson.h || 1080) - 1;
+    const fps = lottieJson.fr || 30;
+    const durationInFrames = Math.ceil((lottieJson.op - lottieJson.ip) || 150);
+
+    const entryPoint = path.join(process.cwd(), "src", "remotion", "index.tsx");
+
+    console.log("[Converter] Bundling Remotion project...");
+    const bundleLocation = await bundle({
+        entryPoint,
+        // We can pass webpack overrides if needed
+    });
+
+    const compositionId = "LottieComposition";
+
+    const browserExecutable = "C:\\Users\\RLS\\.cache\\puppeteer\\chrome\\win64-143.0.7499.192\\chrome-win64\\chrome.exe";
+
+    const composition = await selectComposition({
+        serveUrl: bundleLocation,
+        id: compositionId,
+        inputProps: {
+            lottieJson,
+            width,
+            height,
+        },
+        browserExecutable,
+        chromeMode: "chrome-for-testing",
+        chromiumOptions: {
+            headless: true,
+        },
+        timeoutInMilliseconds: 120000,
+    });
 
     const mp4Path = path.join(tempDir, 'output.mp4');
 
-    // Puppeteer rendering and recording
-    console.log('[Converter] Launching Puppeteer...');
-    const browser = await puppeteer.launch({
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--disable-gpu',
-            '--proxy-server="direct://"',
-            '--proxy-bypass-list=*'
-        ],
+    console.log(`[Converter] Rendering composition (${durationInFrames} frames)...`);
+    await renderMedia({
+        composition: {
+            ...composition,
+            durationInFrames,
+            fps,
+            width,
+            height,
+        },
+        serveUrl: bundleLocation,
+        codec: "h264",
+        outputLocation: mp4Path,
+        inputProps: {
+            lottieJson,
+            width,
+            height,
+        },
+        browserExecutable,
+        chromeMode: "chrome-for-testing",
+        chromiumOptions: {
+            headless: true,
+        },
+        timeoutInMilliseconds: 120000,
+        onProgress: (progress) => {
+            console.log(`[Converter] Rendering progress: ${Math.round(progress.progress * 100)}% (Frame ${progress.renderedFrames}/${durationInFrames})`);
+        },
+        // Quality settings
+        crf: 18,
+        pixelFormat: "yuv420p",
+        x264Preset: "fast",
     });
 
-    const page = await browser.newPage();
-    console.log('[Converter] Page created');
-
-    // Capture browser console logs
-    page.on('console', msg => console.log(`[Browser] ${msg.text()}`));
-
-    // Create a minimal HTML to render Lottie
-    const htmlContent = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <script src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.12.2/lottie.min.js"></script>
-      <style>
-        body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            background-color: white; /* Flatten against white by default */
-        }
-        #lottie {
-            width: 100%;
-            height: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-      </style>
-    </head>
-    <body>
-      <div id="lottie"></div>
-      <script>
-        console.log('Lottie script starting...');
-        let animation;
-        window.loadLottie = (data) => {
-            console.log('Loading animation data...');
-            window.animation = lottie.loadAnimation({
-                container: document.getElementById('lottie'),
-                renderer: 'svg',
-                loop: false,
-                autoplay: false,
-                animationData: data
-            });
-            console.log('Animation loaded. Duration:', window.animation.getDuration(false));
-        };
-
-        window.getDuration = () => window.animation ? window.animation.getDuration(false) : 0;
-      </script>
-    </body>
-    </html>
-  `;
-
-    console.log('[Converter] Setting page content...');
-    await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
-
-    console.log('[Converter] Loading Lottie data into page...');
-    await page.evaluate((data) => (window as any).loadLottie(data), lottieJson);
-
-    const duration = await page.evaluate(() => (window as any).getDuration());
-    console.log(`[Converter] Animation duration: ${duration}s`);
-
-    // Use a reasonable viewport size based on the Lottie JSON
-    const width = lottieJson.w || 1920;
-    const height = lottieJson.h || 1080;
-    await page.setViewport({ width, height, deviceScaleFactor: 1.5 });
-
-    // Debug screenshot
-    const debugScreenshotBefore = path.join(tempDir, 'before.png');
-    await page.screenshot({ path: debugScreenshotBefore });
-    console.log(`[Converter] Debug screenshot (before) saved to ${debugScreenshotBefore}`);
-
-    console.log(`[Converter] Using FFmpeg at: ${ffmpegPath}`);
-    console.log(`[Converter] FFmpeg exists: ${fs.existsSync(ffmpegPath)}`);
-
-    const metadata = await page.evaluate(() => {
-        return {
-            totalFrames: (window as any).animation.totalFrames,
-            frameRate: (window as any).animation.frameRate,
-        };
-    });
-    const { totalFrames, frameRate } = metadata;
-    console.log(`[Converter] Animation metadata: ${totalFrames} frames, ${frameRate} fps`);
-
-    const framesDir = path.join(tempDir, 'frames');
-    if (!fs.existsSync(framesDir)) {
-        fs.mkdirSync(framesDir, { recursive: true });
-    }
-
-    const viewport = { width, height };
-
-    // Close the initial page used for metadata
-    await page.close();
-
-    console.log(`[Converter] Splitting into ${CONCURRENCY} chunks for parallel processing...`);
-    const chunkSize = Math.ceil(totalFrames / CONCURRENCY);
-    const workers = [];
-
-    for (let i = 0; i < CONCURRENCY; i++) {
-        const startFrame = i * chunkSize;
-        const endFrame = Math.min(startFrame + chunkSize, totalFrames);
-
-        if (startFrame >= totalFrames) break;
-
-        const segmentPath = path.join(tempDir, `segment_${i}.mp4`);
-
-        workers.push((async (workerId: number, start: number, end: number, outputPath: string) => {
-            let workerPage;
-            let ffmpegProcess: any;
-            try {
-                console.log(`[Worker ${workerId}] Processing frames ${start} to ${end - 1}`);
-                workerPage = await browser.newPage();
-                await workerPage.setViewport({ ...viewport, deviceScaleFactor: 1.5 });
-                await workerPage.setContent(htmlContent, { waitUntil: 'networkidle0' });
-                await workerPage.evaluate((data) => (window as any).loadLottie(data), lottieJson);
-
-                // Spawn a local FFmpeg for this segment
-                const passThrough = new PassThrough();
-                ffmpegProcess = ffmpeg()
-                    .input(passThrough)
-                    .inputFormat('image2pipe')
-                    .inputOptions([
-                        `-framerate ${frameRate}`,
-                        '-vcodec png' // Explicitly tell FFmpeg to expect PNGs
-                    ])
-                    .outputOptions([
-                        '-c:v libx264',
-                        '-pix_fmt yuv420p',
-                        '-preset ultrafast',
-                        '-crf 18',
-                        `-r ${frameRate}`
-                    ])
-                    .on('error', (err) => {
-                        console.error(`[Worker ${workerId}] FFmpeg error:`, err.message);
-                        // Cleanly end the pipe to avoid hanging
-                        passThrough.end();
-                    })
-                    .save(outputPath);
-
-                for (let f = start; f < end; f++) {
-                    await workerPage.evaluate(async (frame) => {
-                        (window as any).animation.goToAndStop(frame, true);
-                        // Bare minimum wait for paint stabilization
-                        return new Promise(r => requestAnimationFrame(r));
-                    }, f);
-
-                    const screenshot = await workerPage.screenshot({ type: 'png' });
-                    if (passThrough.writable) {
-                        passThrough.write(screenshot);
-                    } else {
-                        console.warn(`[Worker ${workerId}] Pipe not writable at frame ${f}`);
-                        break;
-                    }
-
-                    if ((f - start) % 50 === 0) {
-                        console.log(`[Worker ${workerId}] Progress: ${f - start}/${end - start} frames`);
-                    }
-                }
-
-                passThrough.end();
-
-                // Wait for this segment's FFmpeg to finish
-                await new Promise<void>((resolve, reject) => {
-                    ffmpegProcess.on('end', () => resolve());
-                    ffmpegProcess.on('error', (err: any) => reject(err));
-                });
-
-                console.log(`[Worker ${workerId}] Segment finished: ${outputPath}`);
-            } catch (err: any) {
-                console.error(`[Worker ${workerId}] Failed:`, err.message);
-                throw err;
-            } finally {
-                if (workerPage) await workerPage.close();
-            }
-        })(i, startFrame, endFrame, segmentPath));
-    }
-
-    await Promise.all(workers);
-
-    console.log(`[Converter] All segments encoded. Merging with FFmpeg...`);
-
-    const concatFilePath = path.join(tempDir, 'concat.txt');
-    // Use absolute paths in concat file to be safe
-    const concatContent = Array.from({ length: workers.length }, (_, i) => {
-        const p = path.join(tempDir, `segment_${i}.mp4`).replace(/\\/g, '/');
-        return `file '${p}'`;
-    }).join('\n');
-    fs.writeFileSync(concatFilePath, concatContent);
-
-    const command = ffmpeg()
-        .input(concatFilePath)
-        .inputOptions(['-f concat', '-safe 0'])
-        .outputOptions(['-c copy'])
-        .on('error', (err) => console.error('[Converter] Merge error:', err))
-        .on('end', () => console.log('[Converter] Merge finished'))
-        .save(mp4Path);
-
-    await new Promise<void>((resolve, reject) => {
-        command.on('end', () => resolve());
-        command.on('error', (err) => reject(err));
-    });
-
-    await browser.close();
-    console.log('[Converter] Puppeteer closed');
-
-    if (!fs.existsSync(mp4Path)) {
-        console.error(`[Converter] MP4 file not found at ${mp4Path}`);
-        throw new Error(`MP4 recording failed. File not found at ${mp4Path}`);
-    }
+    console.log(`[Converter] Remotion render finished: ${mp4Path}`);
 
     const results: ConversionResult = {};
 
@@ -277,10 +115,13 @@ export async function convertLottieToVideo(
     if (formats.includes('gif')) {
         const gifPath = path.join(process.cwd(), 'public', 'exports', `${sessionId}.gif`);
         ensureDir(path.dirname(gifPath));
+        const gifFps = Math.min(fps, 30);
+        console.log(`[Converter] Generating stabilized GIF at ${gifFps}fps (${width}x${height})...`);
         await new Promise<void>((resolve, reject) => {
             ffmpeg(mp4Path)
                 .outputOptions([
-                    '-vf', `fps=15,scale=${width}:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse`,
+                    // Use rectangle diff mode and bayer dither for maximum stability
+                    '-vf', `fps=${gifFps},scale=${width}:${height}:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=full[p];[s1][p]paletteuse=diff_mode=rectangle:dither=bayer:bayer_scale=3`,
                     '-loop', '0'
                 ])
                 .save(gifPath)
@@ -293,14 +134,17 @@ export async function convertLottieToVideo(
     if (formats.includes('webp')) {
         const webpPath = path.join(process.cwd(), 'public', 'exports', `${sessionId}.webp`);
         ensureDir(path.dirname(webpPath));
+        const webpFps = Math.min(fps, 30);
+        console.log(`[Converter] Generating stabilized WebP at ${webpFps}fps (${width}x${height})...`);
         await new Promise<void>((resolve, reject) => {
             ffmpeg(mp4Path)
                 .outputOptions([
                     '-vcodec', 'libwebp',
-                    '-filter:v', `fps=fps=20`,
+                    '-filter:v', `fps=${webpFps},scale=${width}:${height}:flags=lanczos`,
                     '-lossless', '1',
+                    '-q:v', '75',
                     '-loop', '0',
-                    '-preset', 'default',
+                    '-preset', 'picture',
                     '-an',
                     '-vsync', '0'
                 ])
@@ -311,7 +155,7 @@ export async function convertLottieToVideo(
         results.webp = `/exports/${sessionId}.webp`;
     }
 
-    // Cleanup temp dir
+    // Cleanup
     // fs.rmSync(tempDir, { recursive: true, force: true });
 
     return results;
