@@ -19,7 +19,6 @@
     "@remotion/cli": "^4.0.435",
     "@remotion/lottie": "^4.0.435",
     "@remotion/renderer": "^4.0.435",
-    "@rspack/binding-win32-x64-msvc": "^1.7.8",
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/uuid": "^10.0.0",
     "class-variance-authority": "^0.7.1",
