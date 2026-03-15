@@ -10,6 +10,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { Sparkles, ArrowRight, Play, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { upload } from "@vercel/blob/client";
 import * as fflate from "fflate";
 
 export default function Home() {
@@ -33,8 +34,8 @@ export default function Home() {
     try {
       // Use a custom progress simulation for better UX during the real request
       const progressInterval = setInterval(() => {
-        setProgress((prev) => (prev < 90 ? prev + 1 : prev));
-      }, 200);
+        setProgress((prev) => (prev < 40 ? prev + 1 : prev));
+      }, 100);
 
       console.log('[Frontend] Reading and compressing file...');
       const fileText = await file.text();
@@ -44,17 +45,35 @@ export default function Home() {
       console.log(`[Frontend] Original: ${file.size} bytes, Compressed: ${compressed.length} bytes`);
 
       const compressedBlob = new Blob([compressed as any], { type: 'application/octet-stream' });
-      const formData = new FormData();
-      formData.append('file', compressedBlob, file.name + '.zlib');
-      formData.append('formats', JSON.stringify(formats));
-
-      console.log('[Frontend] Request sent to /api/convert');
-      const response = await fetch('/api/convert', {
-        method: 'POST',
-        body: formData,
+      
+      console.log('[Frontend] Uploading to Vercel Blob...');
+      const blob = await upload(file.name + '.zlib', compressedBlob, {
+        access: 'public',
+        handleUploadUrl: '/api/upload',
       });
+      console.log('[Frontend] Blob uploaded successfully:', blob.url);
 
       clearInterval(progressInterval);
+      setProgress(50);
+      
+      const conversionProgressInterval = setInterval(() => {
+        setProgress((prev) => (prev < 95 ? prev + 1 : prev));
+      }, 500);
+
+      console.log('[Frontend] Requesting conversion from /api/convert');
+      const response = await fetch('/api/convert', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fileUrl: blob.url,
+          fileName: file.name,
+          formats: formats
+        }),
+      });
+
+      clearInterval(conversionProgressInterval);
       console.log('[Frontend] Response received from /api/convert', response.status);
 
       const contentType = response.headers.get("content-type");
@@ -68,9 +87,10 @@ export default function Home() {
         const snippet = text.length > 100 ? text.substring(0, 100) + '...' : text;
 
         if (response.status === 413) {
-          throw new Error(`File is too large for Vercel (Limit: 4.5MB). Your file is ${(file.size / (1024 * 1024)).toFixed(2)}MB.`);
+          const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+          throw new Error(`File is too large for the server. Your file is ${sizeMB}MB. The current limit is 10MB.`);
         } else if (response.status === 504 || response.status === 408) {
-          throw new Error(`Conversion timed out on Vercel. Large animations might exceed the 10s Hobby limit.`);
+          throw new Error(`Conversion timed out. Large animations might exceed the processing limit.`);
         }
 
         throw new Error(`Server returned ${response.status}: ${snippet || 'Unknown error'}`);

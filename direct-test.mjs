@@ -1,4 +1,4 @@
-import { convertLottieToVideo } from './src/lib/converter.js';
+import { convertLottieToVideo } from './src/lib/converter';
 import fs from 'fs';
 import path from 'path';
 
