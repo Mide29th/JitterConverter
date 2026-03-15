@@ -8,12 +8,16 @@ import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import ffprobeInstaller from '@ffprobe-installer/ffprobe';
 import ffmpeg from 'fluent-ffmpeg';
 
-// Dynamic paths for ffmpeg and ffprobe binaries
-const ffmpegPath = ffmpegInstaller.path;
-const ffprobePath = ffprobeInstaller.path;
+import chromium from "@sparticuz/chromium";
 
-ffmpeg.setFfmpegPath(ffmpegPath);
-ffmpeg.setFfprobePath(ffprobePath);
+// Helper to get executable path
+async function getExecutablePath() {
+    if (process.env.VERCEL) {
+        return await chromium.executablePath();
+    }
+    // Fallback for local development
+    return "C:\\Users\\RLS\\.cache\\puppeteer\\chrome\\win64-143.0.7499.192\\chrome-win64\\chrome.exe";
+}
 
 export interface ConversionResult {
     mp4?: string;
@@ -44,12 +48,11 @@ export async function convertLottieToVideo(
     console.log("[Converter] Bundling Remotion project...");
     const bundleLocation = await bundle({
         entryPoint,
-        // We can pass webpack overrides if needed
     });
 
     const compositionId = "LottieComposition";
 
-    const browserExecutable = "C:\\Users\\RLS\\.cache\\puppeteer\\chrome\\win64-143.0.7499.192\\chrome-win64\\chrome.exe";
+    const browserExecutable = await getExecutablePath();
 
     const composition = await selectComposition({
         serveUrl: bundleLocation,
@@ -60,10 +63,10 @@ export async function convertLottieToVideo(
             height,
         },
         browserExecutable,
-        chromeMode: "chrome-for-testing",
         chromiumOptions: {
             headless: true,
-        },
+            args: process.env.VERCEL ? chromium.args : [],
+        } as any,
         timeoutInMilliseconds: 120000,
     });
 
@@ -87,10 +90,10 @@ export async function convertLottieToVideo(
             height,
         },
         browserExecutable,
-        chromeMode: "chrome-for-testing",
         chromiumOptions: {
             headless: true,
-        },
+            args: process.env.VERCEL ? chromium.args : [],
+        } as any,
         timeoutInMilliseconds: 120000,
         onProgress: (progress) => {
             console.log(`[Converter] Rendering progress: ${Math.round(progress.progress * 100)}% (Frame ${progress.renderedFrames}/${durationInFrames})`);

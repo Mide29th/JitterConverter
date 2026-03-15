@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   serverExternalPackages: [
-    'puppeteer',
+    '@sparticuz/chromium',
     'fluent-ffmpeg',
     '@ffmpeg-installer/ffmpeg',
     '@ffprobe-installer/ffprobe',
